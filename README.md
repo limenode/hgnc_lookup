@@ -17,7 +17,7 @@ A fast, standalone command-line tool for HGNC gene symbol normalization and look
 ## Installation
 **Build from source**
 ```bash
-git clone https://github.com/yourusername/hgnc_lookup.git
+git clone https://github.com/limenode/hgnc_lookup.git
 cd hgnc_lookup
 cargo build --release
 ```
