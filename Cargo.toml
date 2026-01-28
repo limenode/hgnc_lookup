@@ -1,0 +1,19 @@
+[package]
+name = "hgnc_lookup"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+aligned-vec = "0.6.4"
+bytecheck = "0.8.2"
+clap = { version = "4.5.55", features = ["derive"] }
+clap_derive = "4.5.55"
+criterion = "0.8.1"
+csv = "1.4.0"
+dirs = "6.0.0"
+fastrand = "2.3.0"
+rand = "0.9.2"
+reqwest = { version = "0.13.1", default-features = true, features = ["blocking"] }
+rkyv = "0.8.14"
+rkyv_dyn = "0.7.46"
+serde = { version = "1.0.228", features = ["derive"] }
