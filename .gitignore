@@ -1,2 +1,6 @@
 /target
 tests.rs
+test.txt
+
+hgnc_cache.bin
+hgnc_complete_set.txt

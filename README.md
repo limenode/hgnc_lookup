@@ -7,9 +7,10 @@ A fast, standalone command-line tool for HGNC gene symbol normalization and look
 ## Features
 * Normalize gene symbols to official HGNC symbols
 * Fast lookups with zero-copy performance using an rkyv-backed binary cache.
-* Automatic caching to user-level cache directory (`~/.cache/hgnc_lookup/`)
+<!--* Automatic caching to user-level cache directory (`~/.cache/hgnc_lookup/`)-->
 * Auto-downloads the HGNC complete dataset from the HGNC Google Cloud Storage Bucket.
 * Supports the following inputs:
+  * HGNC IDs
   * current HGNC symbols
   * alias symbols
   * previous symbols
@@ -49,4 +50,4 @@ This project is built using several excellent Rust crates, including:
 - [`rkyv`](https://github.com/rkyv/rkyv) for zero-copy serialization
 - [`clap`](https://github.com/clap-rs/clap) for command-line parsing
 - [`reqwest`](https://github.com/seanmonstar/reqwest) for HTTP requests
-- [`dirs`](https://github.com/dirs-dev/dirs-rs) for cache directory resolution
+<!--- [`dirs`](https://github.com/dirs-dev/dirs-rs) for cache directory resolution-->
