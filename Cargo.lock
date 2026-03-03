@@ -648,6 +648,7 @@ dependencies = [
  "clap",
  "csv",
  "field_accessor",
+ "indexmap",
  "rand 0.10.0",
  "reqwest",
  "rkyv 0.8.15",

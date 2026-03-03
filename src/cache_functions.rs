@@ -1,4 +1,5 @@
 use crate::types::{ALL_FIELDS, ArchivedHgncRecord, Cache, HgncRecord};
+use indexmap::IndexMap;
 use std::{collections::HashMap, path::Path};
 
 const HGNC_COMPLETE_SET_URL: &str =
@@ -50,30 +51,28 @@ pub fn build_cache(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn extract_records<'a, I>(record: &ArchivedHgncRecord, fields: I) -> IndexMap<String, String>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    fields
+        .into_iter()
+        .filter_map(|name| {
+            let trimmed = name.trim();
+            record
+                .get_field(trimmed)
+                .filter(|value| !value.is_empty())
+                .map(|value| (trimmed.to_string(), value.to_string()))
+        })
+        .collect()
+}
+
 pub fn get_fields_from_record(
     record: &ArchivedHgncRecord,
     fields: &Option<Vec<String>>,
-) -> Vec<String> {
-    let fields = match fields {
-        Some(v) => v,
-        None => {
-            return ALL_FIELDS
-                .iter()
-                .filter_map(|name| {
-                    record
-                        .get_field(name.trim())
-                        .map(|value| format!("{}: {}", name.trim(), value))
-                })
-                .collect();
-        }
-    };
-
-    fields
-        .iter()
-        .filter_map(|name| {
-            record
-                .get_field(name.trim())
-                .map(|value| format!("{}: {}", name.trim(), value.to_string()))
-        })
-        .collect()
+) -> IndexMap<String, String> {
+    match fields {
+        Some(v) => extract_records(record, v.iter().map(|s| s.as_str())),
+        None => extract_records(record, ALL_FIELDS.iter().copied()),
+    }
 }

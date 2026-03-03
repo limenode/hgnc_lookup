@@ -2,13 +2,21 @@ mod cache_functions;
 mod types;
 
 use cache_functions::get_fields_from_record;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use rkyv::rancor;
 use std::error::Error;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use types::{ArchivedCache, ArchivedHgncRecord};
+
+#[derive(ValueEnum, Clone, Debug)]
+enum OutputType {
+    Pretty,
+    Json,
+    Csv,
+    Tsv,
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -23,6 +31,10 @@ struct Cli {
     /// Fields to query (e.g. hgnc_id, symbol, alias_symbol)
     #[arg(short, long, value_delimiter = ',')]
     fields: Option<Vec<String>>,
+
+    /// Output format
+    #[arg(short, long)]
+    output_type: Option<OutputType>,
 }
 
 fn benchmark_lookups(cache: &ArchivedCache, n: usize) -> Result<(), Box<dyn Error>> {
@@ -126,7 +138,7 @@ fn query_map<'a>(cache: &'a ArchivedCache, query: &str) -> Option<&'a ArchivedHg
 
 fn run_interactive(
     cache: &ArchivedCache,
-    fields: Option<Vec<String>>,
+    fields: &Option<Vec<String>>,
 ) -> Result<(), Box<dyn Error>> {
     let stdin = std::io::stdin();
     for line in stdin.lock().lines() {
@@ -136,8 +148,8 @@ fn run_interactive(
         match record {
             Some(record) => {
                 println!("Found: {}", record.symbol);
-                for value in get_fields_from_record(record, &fields) {
-                    println!("  {}", value);
+                for value in get_fields_from_record(record, fields) {
+                    println!("  {}: {}", value.0, value.1);
                 }
             }
             None => println!("No record found for query: {}", query),
@@ -149,36 +161,51 @@ fn run_interactive(
 
 fn main() {
     let args = Cli::parse();
+
+    // Build cache (download and serialize) if it doesn't exist
     let cache_path: &Path = Path::new("hgnc_cache.bin");
     cache_functions::build_cache(cache_path).expect("Failed to download cache");
 
+    // Load cache from file
     let bytes = std::fs::read(cache_path).expect("Failed to read cache file");
     let archived_cache = rkyv::access::<ArchivedCache, rancor::Error>(&bytes).unwrap();
 
+    // Benchmark lookups
     benchmark_lookups(archived_cache, 10000).expect("Failed to benchmark lookups");
 
-    if args.input_file.is_some() {
-        // Read lines as queries from the input file
-        let file = File::open(args.input_file.as_ref().unwrap());
-        let reader = BufReader::new(file.expect("Failed to open input file"));
-        for line in reader.lines() {
-            let query: &str = line.as_ref().unwrap();
-            if query.trim().is_empty() {
-                continue; // Skip empty lines
-            }
-            println!("Query: {}", query);
-            let record = query_map(archived_cache, query);
-            match record {
-                Some(record) => {
-                    println!("Found: {}", record.symbol);
-                    for value in get_fields_from_record(record, &args.fields) {
-                        println!("  {}", value);
-                    }
-                }
-                None => println!("No record found for query: {}", query),
-            }
+    if !args.input_file.is_some() {
+        let output_type = args.output_type.unwrap_or(OutputType::Pretty);
+        println!("{:?}", output_type);
+        run_interactive(archived_cache, &args.fields).expect("Failed to run interactive mode");
+        return;
+    }
+
+    // Read lines as queries from the input file
+    let file = File::open(args.input_file.as_ref().unwrap());
+    let reader = BufReader::new(file.expect("Failed to open input file"));
+
+    let output_type = args.output_type.unwrap_or(OutputType::Json);
+    println!("{:?}", output_type);
+
+    for line in reader.lines() {
+        let query: &str = line.as_ref().unwrap();
+        if query.trim().is_empty() {
+            continue; // Skip empty lines
         }
-    } else {
-        run_interactive(archived_cache, args.fields).expect("Failed to run interactive mode");
+        println!("Query: {}", query);
+
+        let record = query_map(archived_cache, query);
+        match record {
+            Some(record) => {
+                println!("Found: {}", record.symbol);
+                let result = get_fields_from_record(record, &args.fields);
+
+                println!("Result:");
+                for (field, value) in result {
+                    println!("  {}: {}", field, value);
+                }
+            }
+            None => println!("No record found for query: {}", query),
+        }
     }
 }
