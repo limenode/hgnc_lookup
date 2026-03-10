@@ -5,8 +5,7 @@ use cache_functions::get_fields_from_record;
 use clap::{Parser, ValueEnum};
 use rkyv::rancor;
 use std::error::Error;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::BufRead;
 use std::path::Path;
 use types::{ArchivedCache, ArchivedHgncRecord};
 
@@ -135,29 +134,6 @@ fn benchmark_lookups(cache: &ArchivedCache, n: usize) -> Result<(), Box<dyn Erro
 fn query_map<'a>(cache: &'a ArchivedCache, query: &str) -> Option<&'a ArchivedHgncRecord> {
     let idx = cache.map.get(query.to_uppercase().as_str())?;
     cache.records.get(idx.to_native() as usize)
-}
-
-fn run_interactive(
-    cache: &ArchivedCache,
-    fields: &Option<Vec<String>>,
-) -> Result<(), Box<dyn Error>> {
-    let stdin = std::io::stdin();
-    for line in stdin.lock().lines() {
-        let query: &str = line.as_ref().unwrap();
-        println!("Query: {}", query);
-        let record = query_map(cache, query);
-        match record {
-            Some(record) => {
-                println!("Found: {}", record.symbol);
-                for value in get_fields_from_record(record, fields) {
-                    println!("  {}: {}", value.0, value.1);
-                }
-            }
-            None => println!("No record found for query: {}", query),
-        }
-    }
-
-    Ok(())
 }
 
 fn main() {
