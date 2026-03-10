@@ -30,12 +30,45 @@ pub fn build_cache(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
 
     for result in reader.deserialize() {
         let record: HgncRecord = result?;
+
+        // Check for map collisions and log them
+        if let Some(existing_idx) = map.get(&record.hgnc_id.to_uppercase()) {
+            eprintln!(
+                "Collision detected for HGNC ID {}: existing record at index {}, new record at index {}",
+                record.hgnc_id, existing_idx, record_idx
+            );
+        }
+        if let Some(existing_idx) = map.get(&record.symbol.to_uppercase()) {
+            eprintln!(
+                "Collision detected for symbol {}: existing record at index {}, new record at index {}",
+                record.symbol, existing_idx, record_idx
+            );
+        }
+
         map.insert(record.hgnc_id.clone().to_uppercase(), record_idx);
         map.insert(record.symbol.clone().to_uppercase(), record_idx);
         for alias in record.alias_symbol.split('|').filter(|s| !s.is_empty()) {
+            if let Some(existing_idx) = map.get(&alias.trim().to_uppercase()) {
+                eprintln!(
+                    "Collision detected for alias symbol {}: existing record at index {}, new record at index {}",
+                    alias.trim(),
+                    existing_idx,
+                    record_idx
+                );
+            }
+
             map.insert(alias.trim().to_uppercase(), record_idx);
         }
         for prev in record.prev_symbol.split('|').filter(|s| !s.is_empty()) {
+            if let Some(existing_idx) = map.get(&prev.trim().to_uppercase()) {
+                eprintln!(
+                    "Collision detected for previous symbol {}: existing record at index {}, new record at index {}",
+                    prev.trim(),
+                    existing_idx,
+                    record_idx
+                );
+            }
+
             map.insert(prev.trim().to_uppercase(), record_idx);
         }
         records.push(record);

@@ -3,6 +3,7 @@ mod types;
 
 use cache_functions::get_fields_from_record;
 use clap::{Parser, ValueEnum};
+use indexmap::IndexMap;
 use rkyv::rancor;
 use std::error::Error;
 use std::io::BufRead;
@@ -13,8 +14,15 @@ use types::{ArchivedCache, ArchivedHgncRecord};
 enum OutputType {
     Pretty,
     Json,
+    JsonPretty,
     Csv,
     Tsv,
+}
+
+/// Result of a query operation
+enum QueryResult {
+    Found(IndexMap<String, String>),
+    NotFound(String),
 }
 
 #[derive(Parser, Debug)]
@@ -37,7 +45,11 @@ struct Cli {
     benchmark: bool,
 }
 
-fn benchmark_lookups(cache: &ArchivedCache, n: usize) -> Result<(), Box<dyn Error>> {
+fn benchmark_lookups(
+    cache: &ArchivedCache,
+    n: usize,
+    percent_hits: f64,
+) -> Result<(), Box<dyn Error>> {
     use rand::RngExt;
     use rand::prelude::{IndexedRandom, SliceRandom};
     use std::time::{Duration, Instant};
@@ -62,7 +74,7 @@ fn benchmark_lookups(cache: &ArchivedCache, n: usize) -> Result<(), Box<dyn Erro
     // Randomly sample n keys, with 5% being random strings (misses)
     let mut rng = rand::rng();
 
-    let n_hits = (n as f64 * 1.00) as usize;
+    let n_hits = (n as f64 * percent_hits) as usize;
     let n_misses = n - n_hits;
 
     let mut sampled_keys: Vec<String> = all_keys.sample(&mut rng, n_hits).cloned().collect();
@@ -93,7 +105,7 @@ fn benchmark_lookups(cache: &ArchivedCache, n: usize) -> Result<(), Box<dyn Erro
             success_count += 1;
         } else {
             // Uncomment the line below to see which keys were misses
-            println!("Missed key: {}", key);
+            // println!("Missed key: {}", key);
         }
     }
 
@@ -136,6 +148,82 @@ fn query_map<'a>(cache: &'a ArchivedCache, query: &str) -> Option<&'a ArchivedHg
     cache.records.get(idx.to_native() as usize)
 }
 
+/// Process a query and return a QueryResult
+fn process_query<'a>(
+    cache: &'a ArchivedCache,
+    query: &str,
+    fields: &Option<Vec<String>>,
+) -> QueryResult {
+    match query_map(cache, query) {
+        Some(record) => {
+            let record_map = get_fields_from_record(record, fields);
+            QueryResult::Found(record_map)
+        }
+        None => QueryResult::NotFound(query.to_string()),
+    }
+}
+
+/// Print a query result in the specified format
+fn print_query_result(
+    result: &QueryResult,
+    output_type: &OutputType,
+) -> Result<(), Box<dyn Error>> {
+    match (result, output_type) {
+        // Found cases
+        (QueryResult::Found(record_map), OutputType::Pretty) => {
+            for (field, value) in record_map {
+                println!("{}: {}", field, value);
+            }
+        }
+        (QueryResult::Found(record_map), OutputType::Json) => {
+            let json = serde_json::to_string(&record_map)?;
+            println!("{},", json);
+        }
+        (QueryResult::Found(record_map), OutputType::JsonPretty) => {
+            let json = serde_json::to_string_pretty(&record_map)?;
+            println!("{},", json);
+        }
+        (QueryResult::Found(record_map), OutputType::Csv) => {
+            let mut wtr = csv::WriterBuilder::new().from_writer(std::io::stdout());
+            wtr.write_record(record_map.keys())?;
+            wtr.write_record(record_map.values())?;
+            wtr.flush()?;
+        }
+        (QueryResult::Found(record_map), OutputType::Tsv) => {
+            let mut wtr = csv::WriterBuilder::new()
+                .delimiter(b'\t')
+                .from_writer(std::io::stdout());
+            wtr.write_record(record_map.keys())?;
+            wtr.write_record(record_map.values())?;
+            wtr.flush()?;
+        }
+
+        // NotFound cases
+        (QueryResult::NotFound(query), OutputType::Json) => {
+            let error_obj = serde_json::json!({
+                "error": "not_found",
+                "query": query,
+                "message": format!("No record found for query: {}", query)
+            });
+            let json = serde_json::to_string(&error_obj)?;
+            println!("{}", json);
+        }
+        (QueryResult::NotFound(query), OutputType::JsonPretty) => {
+            let error_obj = serde_json::json!({
+                "error": "not_found",
+                "query": query,
+                "message": format!("No record found for query: {}", query)
+            });
+            let json = serde_json::to_string_pretty(&error_obj)?;
+            println!("{},", json);
+        }
+        (QueryResult::NotFound(query), OutputType::Pretty | OutputType::Csv | OutputType::Tsv) => {
+            eprintln!("No record found for query: {}", query);
+        }
+    }
+    Ok(())
+}
+
 fn main() {
     let args = Cli::parse();
 
@@ -149,11 +237,11 @@ fn main() {
 
     // Optionally benchmark lookups
     if args.benchmark {
-        benchmark_lookups(archived_cache, 10000).expect("Failed to benchmark lookups");
+        benchmark_lookups(archived_cache, 100000, 0.95).expect("Failed to benchmark lookups");
     }
 
-    let output_type = args.output_type.unwrap_or(OutputType::Json);
-
+    // Determine output type (default to Pretty)
+    let output_type = args.output_type.unwrap_or(OutputType::Pretty);
     println!("Output type: {:?}", output_type);
 
     // Read queries from stdin (one per line)
@@ -169,23 +257,18 @@ fn main() {
             }
         };
 
+        // Trim the line and skip if it's empty
         let query: &str = line.trim();
         if query.is_empty() {
             continue; // Skip empty lines
         }
 
-        let record = query_map(archived_cache, query);
-        match record {
-            Some(record) => {
-                println!("Found: {}", record.symbol);
-                let result = get_fields_from_record(record, &args.fields);
+        // Process the query and get the result
+        let result = process_query(archived_cache, query, &args.fields);
 
-                println!("Result:");
-                for (field, value) in result {
-                    println!("  {}: {}", field, value);
-                }
-            }
-            None => println!("No record found for query: {}", query),
+        // Print the result in the specified format
+        if let Err(e) = print_query_result(&result, &output_type) {
+            eprintln!("Error printing result: {}", e);
         }
     }
 }
