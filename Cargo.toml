@@ -4,11 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-boomphf = "0.6.0"
 clap = { version = "4.5.60", features = ["derive"] }
 csv = "1.4.0"
 dirs = "6.0.0"
-field_accessor = "0.6.2"
 indexmap = { version = "2.13.0", features = ["serde"] }
 rand = "0.10.0"
 reqwest = { version = "0.13.2", features = ["blocking"] }
@@ -16,4 +14,3 @@ rkyv = "0.8.15"
 rkyv_dyn = "0.7.46"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
-tempfile = "3.26.0"
