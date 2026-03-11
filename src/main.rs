@@ -1,13 +1,14 @@
 mod cache_functions;
 mod types;
 
+use cache_functions::get_cache_path;
 use cache_functions::get_fields_from_record;
 use clap::{Parser, ValueEnum};
 use indexmap::IndexMap;
 use rkyv::rancor;
 use std::error::Error;
 use std::io::BufRead;
-use std::path::Path;
+use std::path::PathBuf;
 use types::{ArchivedCache, ArchivedHgncRecord};
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -231,12 +232,12 @@ fn print_query_result(
 fn main() {
     let args = Cli::parse();
 
-    let cache_path: &Path = Path::new("hgnc_cache.bin");
+    let cache_path: PathBuf = get_cache_path().expect("Failed to determine cache path");
 
     // Clear cache file if --clear-cache is set
     if args.clear_cache {
-        if cache_path.exists() {
-            std::fs::remove_file(cache_path).expect("Failed to clear cache file");
+        if (&cache_path).exists() {
+            std::fs::remove_file(&cache_path).expect("Failed to clear cache file");
             // println!("Cache file cleared: {:?}", cache_path);
         } else {
             // println!("No cache file to clear at: {:?}", cache_path);
@@ -244,10 +245,10 @@ fn main() {
     }
 
     // Build cache (download and serialize) if it doesn't exist
-    cache_functions::build_cache(cache_path).expect("Failed to download cache");
+    cache_functions::build_cache().expect("Failed to download cache");
 
     // Load cache from file
-    let bytes = std::fs::read(cache_path).expect("Failed to read cache file");
+    let bytes = std::fs::read(&cache_path).expect("Failed to read cache file");
     let archived_cache = rkyv::access::<ArchivedCache, rancor::Error>(&bytes).unwrap();
 
     // Optionally benchmark lookups

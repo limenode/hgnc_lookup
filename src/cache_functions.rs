@@ -1,6 +1,7 @@
 use crate::types::{ALL_FIELDS, ArchivedHgncRecord, Cache, HgncRecord};
 use indexmap::IndexMap;
-use std::{collections::HashMap, path::Path};
+use std::collections::HashMap;
+use std::error::Error;
 
 const HGNC_COMPLETE_SET_URL: &str =
     "https://storage.googleapis.com/public-download-files/hgnc/tsv/tsv/hgnc_complete_set.txt";
@@ -19,7 +20,7 @@ fn insert_with_priority(
     key_raw: String,
     priority: KeyPriority,
     idx: usize,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn Error>> {
     let key = key_raw.trim().to_uppercase();
 
     // Check if the key is empty after trimming
@@ -86,12 +87,26 @@ fn insert_with_priority(
     Ok(())
 }
 
-pub fn build_cache(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+pub fn get_cache_path() -> Result<std::path::PathBuf, Box<dyn Error>> {
+    let cache_path = dirs::cache_dir()
+        .ok_or("Could not determine cache directory for this platform")?
+        .join("hgnc_lookup")
+        .join("hgnc_cache.bin");
+    Ok(cache_path)
+}
+
+pub fn build_cache() -> Result<(), Box<dyn Error>> {
+    // get cache directory and create if it doesn't exist
+    let cache_path = get_cache_path()?;
+    if let Some(parent) = cache_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
     // If the file already exists, skip downloading and building
-    if path.exists() {
+    if cache_path.exists() {
         println!(
             "Cache file already exists at {:?}, skipping download and build.",
-            path
+            cache_path
         );
         return Ok(());
     }
@@ -172,7 +187,7 @@ pub fn build_cache(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let serialized = rkyv::to_bytes::<rkyv::rancor::Error>(&cache)?;
 
     // Write to file
-    std::fs::write(path, serialized)?;
+    std::fs::write(cache_path, serialized)?;
 
     Ok(())
 }
