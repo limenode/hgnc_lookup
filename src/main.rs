@@ -51,6 +51,10 @@ struct Cli {
     /// Return all matches instead of just the highest priority one
     #[arg(long)]
     all_matches: bool,
+
+    /// Don't print out headers/labels in the output
+    #[arg(long)]
+    no_header: bool,
 }
 
 fn benchmark_lookups(
@@ -111,7 +115,6 @@ fn benchmark_lookups(
 
         if matches!(result, QueryResult::Found(_, _)) {
             success_count += 1;
-            // print!("woop woop")
         } else {
             // Uncomment the line below to see which keys were misses
             // println!("Missed key: {}", key);
@@ -158,7 +161,7 @@ fn lookup_gene(
     return_all: bool,
     fields: &Option<Vec<String>>,
 ) -> QueryResult {
-    // Get appropriate indices iterator
+    // Get appropriate indices
     let indices = cache.get_indices(query, return_all);
 
     match indices {
@@ -186,6 +189,7 @@ fn lookup_gene(
 fn print_query_result(
     result: &QueryResult,
     output_type: &OutputType,
+    no_header: bool,
 ) -> Result<(), Box<dyn Error>> {
     match (result, output_type) {
         // Found cases
@@ -200,7 +204,11 @@ fn print_query_result(
                 }
 
                 for (field, value) in record_map {
-                    println!("{}: {}", field, value);
+                    if no_header {
+                        println!("{}", value);
+                    } else {
+                        println!("{}: {}", field, value);
+                    }
                 }
             }
         }
@@ -227,10 +235,12 @@ fn print_query_result(
 
             // Get all field names (assuming all records have same fields)
             if let Some(first_record) = records.first() {
-                // Write header with "query" as first column
-                let mut headers = vec!["query".to_string()];
-                headers.extend(first_record.keys().map(|k| k.to_string()));
-                wtr.write_record(&headers)?;
+                if !no_header {
+                    // Write header with "query" as first column
+                    let mut headers = vec!["query".to_string()];
+                    headers.extend(first_record.keys().map(|k| k.to_string()));
+                    wtr.write_record(&headers)?;
+                }
 
                 // Write each record as a row
                 for record_map in records {
@@ -249,10 +259,12 @@ fn print_query_result(
 
             // Get all field names (assuming all records have same fields)
             if let Some(first_record) = records.first() {
-                // Write header with "query" as first column
-                let mut headers = vec!["query".to_string()];
-                headers.extend(first_record.keys().map(|k| k.to_string()));
-                wtr.write_record(&headers)?;
+                if !no_header {
+                    // Write header with "query" as first column
+                    let mut headers = vec!["query".to_string()];
+                    headers.extend(first_record.keys().map(|k| k.to_string()));
+                    wtr.write_record(&headers)?;
+                }
 
                 // Write each record as a row
                 for record_map in records {
@@ -345,7 +357,7 @@ fn main() {
         let result = lookup_gene(archived_cache, query, args.all_matches, &args.fields);
 
         // Print the result in the specified format
-        if let Err(e) = print_query_result(&result, &output_type) {
+        if let Err(e) = print_query_result(&result, &output_type, args.no_header) {
             eprintln!("Error printing result: {}", e);
         }
     }
