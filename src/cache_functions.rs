@@ -1,4 +1,4 @@
-use crate::types::{ALL_FIELDS, ArchivedHgncRecord, Cache, HgncRecord};
+use crate::types::{ALL_FIELDS, ArchivedHgncRecord, Cache, HgncRecord, KeyPriority, Match};
 use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::error::Error;
@@ -6,83 +6,47 @@ use std::error::Error;
 const HGNC_COMPLETE_SET_URL: &str =
     "https://storage.googleapis.com/public-download-files/hgnc/tsv/tsv/hgnc_complete_set.txt";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum KeyPriority {
-    Alias = 0,
-    Previous = 1,
-    Standard = 2,
-    Static = 3,
-}
-
-fn insert_with_priority(
-    map: &mut HashMap<String, usize>,
-    key_priorities: &mut HashMap<String, KeyPriority>,
-    key_raw: String,
+fn insert_match(
+    map: &mut HashMap<String, Vec<Match>>,
+    key: String,
     priority: KeyPriority,
     idx: usize,
 ) -> Result<(), Box<dyn Error>> {
-    let key = key_raw.trim().to_uppercase();
+    let key = key.trim().to_uppercase();
 
-    // Check if the key is empty after trimming
+    // Skip empty keys
     if key.is_empty() {
         return Ok(()); // Skip empty keys
     }
 
-    let existing_priority = key_priorities.get(&key);
+    let new_match = Match::new(priority, idx);
 
-    if let Some(&existing_priority) = existing_priority {
-        // Check for Static-Static collision - this is a fatal error
-        if existing_priority == KeyPriority::Static && priority == KeyPriority::Static {
-            return Err(format!(
-                "FATAL: Duplicate static key detected: '{}'. Existing at index {}, new at index {}. Static keys must be unique.",
-                key,
-                map.get(&key).unwrap_or(&usize::MAX),
-                idx
-            ).into());
-        }
+    map.entry(key.clone())
+        .and_modify(|matches| {
+            // Check for Static-Static collision - this is a fatal error
+            if priority == KeyPriority::Static
+                && matches.iter().any(|m| m.priority == KeyPriority::Static)
+            {
+                eprintln!(
+                    "FATAL: Duplicate static key detected: '{}'. This should never happen.",
+                    key
+                );
+            }
 
-        // Static keys should never be overridden by non-static
-        if existing_priority == KeyPriority::Static {
+            // Add the new match
+            matches.push(new_match);
+
+            // Keep sorted by priority (highest first)
+            matches.sort_by(|a, b| b.priority.cmp(&a.priority));
+
             eprintln!(
-                "Collision detected for key {}: existing priority {:?} (index {}), new priority {:?} (index {}) - keeping existing (static)",
+                "Key '{}' now has {} match(es) with priorities: {:?}",
                 key,
-                existing_priority,
-                map.get(&key).unwrap_or(&usize::MAX),
-                priority,
-                idx
+                matches.len(),
+                matches.iter().map(|m| m.priority).collect::<Vec<_>>()
             );
-            return Ok(());
-        }
-
-        if priority > existing_priority {
-            // Higher priority, override
-            eprintln!(
-                "Collision detected for key {}: existing priority {:?} (index {}), new priority {:?} (index {}) - keeping new",
-                key,
-                existing_priority,
-                map.get(&key).unwrap_or(&usize::MAX),
-                priority,
-                idx
-            );
-
-            map.insert(key.clone(), idx);
-            key_priorities.insert(key, priority);
-        } else {
-            // else: lower or equal priority, skip insertion
-            eprintln!(
-                "Collision detected for key {}: existing priority {:?} (index {}), new priority {:?} (index {}) - keeping existing",
-                key,
-                existing_priority,
-                map.get(&key).unwrap_or(&usize::MAX),
-                priority,
-                idx
-            );
-        }
-    } else {
-        // New key, insert
-        map.insert(key.clone(), idx);
-        key_priorities.insert(key, priority);
-    }
+        })
+        .or_insert_with(|| vec![new_match]);
 
     Ok(())
 }
@@ -120,8 +84,7 @@ pub fn build_cache() -> Result<(), Box<dyn Error>> {
         .from_reader(content.as_ref());
 
     // Iterate, build HashMap and Vec, and create Cache
-    let mut map: HashMap<String, usize> = HashMap::new();
-    let mut key_priorities: HashMap<String, KeyPriority> = HashMap::new();
+    let mut map: HashMap<String, Vec<Match>> = HashMap::new();
     let mut records: Vec<HgncRecord> = Vec::new();
     let mut record_idx = 0;
 
@@ -129,40 +92,34 @@ pub fn build_cache() -> Result<(), Box<dyn Error>> {
         let record: HgncRecord = result?;
 
         // Insert HGNC ID as Static (will error on collision)
-        let hgnc_key = record.hgnc_id.trim().to_uppercase();
-        insert_with_priority(
+        insert_match(
             &mut map,
-            &mut key_priorities,
-            hgnc_key,
+            record.hgnc_id.clone(),
             KeyPriority::Static,
             record_idx,
         )?;
 
         // Insert Ensembl ID as Static (will error on collision)
-        let ensembl_key = record.ensembl_gene_id.trim().to_uppercase();
-        insert_with_priority(
+        insert_match(
             &mut map,
-            &mut key_priorities,
-            ensembl_key,
+            record.ensembl_gene_id.clone(),
             KeyPriority::Standard,
             record_idx,
         )?;
 
         // Insert standard symbol
-        insert_with_priority(
+        insert_match(
             &mut map,
-            &mut key_priorities,
-            record.symbol.trim().to_uppercase(),
+            record.symbol.clone(),
             KeyPriority::Standard,
             record_idx,
         )?;
 
         // Insert previous symbols
         for prev in record.prev_symbol.split('|').filter(|s| !s.is_empty()) {
-            insert_with_priority(
+            insert_match(
                 &mut map,
-                &mut key_priorities,
-                prev.trim().to_uppercase(),
+                prev.to_string(),
                 KeyPriority::Previous,
                 record_idx,
             )?;
@@ -170,13 +127,7 @@ pub fn build_cache() -> Result<(), Box<dyn Error>> {
 
         // Insert alias symbols
         for alias in record.alias_symbol.split('|').filter(|s| !s.is_empty()) {
-            insert_with_priority(
-                &mut map,
-                &mut key_priorities,
-                alias.trim().to_uppercase(),
-                KeyPriority::Alias,
-                record_idx,
-            )?;
+            insert_match(&mut map, alias.to_string(), KeyPriority::Alias, record_idx)?;
         }
 
         records.push(record);

@@ -1,4 +1,4 @@
-use rkyv::{Archive, Deserialize, Serialize};
+use rkyv::{Archive, Deserialize, Serialize, vec::ArchivedVec};
 
 #[derive(serde::Deserialize, Debug, PartialEq, Archive, Serialize, Deserialize)]
 pub struct HgncRecord {
@@ -179,8 +179,78 @@ pub const ALL_FIELDS: &'static [&'static str] = &[
     "gencc",
 ];
 
+/// Priority levels for different types of gene identifiers/symbols
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Archive, Serialize, Deserialize)]
+#[rkyv(attr(derive(PartialEq, PartialOrd, Ord, Copy, Clone, Eq)))]
+pub enum KeyPriority {
+    Alias = 0,
+    Previous = 1,
+    Standard = 2,
+    Static = 3,
+}
+
+/// Represents a match between a search key and a record
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Archive, Serialize, Deserialize)]
+pub struct Match {
+    pub priority: KeyPriority,
+    pub record_idx: usize,
+}
+
+impl Match {
+    pub fn new(priority: KeyPriority, record_idx: usize) -> Self {
+        Self {
+            priority,
+            record_idx,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Archive, Serialize, Deserialize)]
 pub struct Cache {
     pub records: Vec<HgncRecord>,
-    pub map: std::collections::HashMap<String, usize>,
+    pub map: std::collections::HashMap<String, Vec<Match>>,
+}
+
+impl ArchivedCache {
+    /// Get all matches for a given key, sorted by priority (highest first)
+    pub fn get_matches(&self, key: &str) -> Option<&ArchivedVec<ArchivedMatch>> {
+        let normalized_key = key.trim().to_uppercase();
+
+        self.map.get(normalized_key.as_str())
+    }
+
+    /// Get indices based on whether to return all matches or just highest priority
+    /// Get indices of matching records, optionally filtered by highest priority
+    pub fn get_indices(&self, key: &str, return_all: bool) -> Option<Vec<usize>> {
+        let matches = self.get_matches(key)?;
+
+        if matches.is_empty() {
+            return None;
+        }
+
+        if return_all {
+            // Return all match indices
+            Some(
+                matches
+                    .iter()
+                    .map(|m| m.record_idx.to_native() as usize)
+                    .collect(),
+            )
+        } else {
+            // Find highest priority and return only those indices
+            let highest_priority = matches.iter().map(|m| m.priority).max()?;
+
+            let filtered: Vec<usize> = matches
+                .iter()
+                .filter(|m| m.priority == highest_priority)
+                .map(|m| m.record_idx.to_native() as usize)
+                .collect();
+
+            if filtered.is_empty() {
+                None
+            } else {
+                Some(filtered)
+            }
+        }
+    }
 }
