@@ -43,6 +43,10 @@ struct Cli {
     /// Run benchmark before processing queries
     #[arg(long)]
     benchmark: bool,
+
+    /// Clear cache file before building (forces re-download)
+    #[arg(long)]
+    clear_cache: bool,
 }
 
 fn benchmark_lookups(
@@ -227,8 +231,19 @@ fn print_query_result(
 fn main() {
     let args = Cli::parse();
 
-    // Build cache (download and serialize) if it doesn't exist
     let cache_path: &Path = Path::new("hgnc_cache.bin");
+
+    // Clear cache file if --clear-cache is set
+    if args.clear_cache {
+        if cache_path.exists() {
+            std::fs::remove_file(cache_path).expect("Failed to clear cache file");
+            // println!("Cache file cleared: {:?}", cache_path);
+        } else {
+            // println!("No cache file to clear at: {:?}", cache_path);
+        }
+    }
+
+    // Build cache (download and serialize) if it doesn't exist
     cache_functions::build_cache(cache_path).expect("Failed to download cache");
 
     // Load cache from file
