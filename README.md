@@ -11,6 +11,7 @@ A fast, standalone command-line tool for HGNC gene symbol normalization and look
 * Auto-downloads the HGNC complete dataset from the HGNC Google Cloud Storage Bucket.
 * Supports the following inputs:
   * HGNC IDs
+  * Ensembl Gene IDs
   * current HGNC symbols
   * alias symbols
   * previous symbols
