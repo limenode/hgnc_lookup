@@ -237,20 +237,17 @@ impl ArchivedCache {
                     .collect(),
             )
         } else {
-            // Find highest priority and return only those indices
-            let highest_priority = matches.iter().map(|m| m.priority).max()?;
+            // matches are sorted by priority, first has highest priority
+            let highest_priority = matches[0].priority;
 
-            let filtered: Vec<usize> = matches
-                .iter()
-                .filter(|m| m.priority == highest_priority)
-                .map(|m| m.record_idx.to_native() as usize)
-                .collect();
-
-            if filtered.is_empty() {
-                None
-            } else {
-                Some(filtered)
-            }
+            // Take while priority matches
+            Some(
+                matches
+                    .iter()
+                    .take_while(|m| m.priority == highest_priority)
+                    .map(|m| m.record_idx.to_native() as usize)
+                    .collect(),
+            )
         }
     }
 }

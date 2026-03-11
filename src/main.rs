@@ -108,7 +108,7 @@ fn benchmark_lookups(
 
     for key in sampled_keys {
         let start = Instant::now();
-        let result = lookup_gene(cache, &key, false, &None);
+        let result = lookup_gene(cache, &key, true, &None);
         let duration = start.elapsed();
 
         durations.push(duration);
