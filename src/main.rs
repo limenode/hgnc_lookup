@@ -10,6 +10,8 @@ use std::io::BufRead;
 use std::path::PathBuf;
 use types::ArchivedCache;
 
+use crate::types::MatchSelection;
+
 #[derive(ValueEnum, Clone, Debug)]
 enum OutputType {
     Pretty,
@@ -43,6 +45,14 @@ struct Cli {
     /// Run benchmark before processing queries
     #[arg(long)]
     benchmark: bool,
+
+    /// Specify number of lookups for benchmark (default: 10,000)
+    #[arg(long, default_value_t = 10000)]
+    benchmark_lookups: usize,
+
+    /// Specify percentage of hits vs misses for benchmark (default: 95.0)
+    #[arg(long, default_value_t = 95.0)]
+    benchmark_hits: f64,
 
     /// Clear cache file before building (forces re-download)
     #[arg(long)]
@@ -108,7 +118,7 @@ fn benchmark_lookups(
 
     for key in sampled_keys {
         let start = Instant::now();
-        let result = lookup_gene(cache, &key, true, &None);
+        let result = lookup_gene(cache, &key, MatchSelection::All, &None);
         let duration = start.elapsed();
 
         durations.push(duration);
@@ -150,7 +160,6 @@ fn benchmark_lookups(
         "Lookups per second:  {:.2}",
         n as f64 / total_duration.as_secs_f64()
     );
-    println!("=========================\n");
 
     Ok(())
 }
@@ -158,30 +167,18 @@ fn benchmark_lookups(
 fn lookup_gene(
     cache: &ArchivedCache,
     query: &str,
-    return_all: bool,
+    selection: MatchSelection,
     fields: &Option<Vec<String>>,
 ) -> QueryResult {
-    // Get appropriate indices
-    let indices = cache.get_indices(query, return_all);
+    let records: Vec<_> = cache
+        .matching_records(query, selection)
+        .map(|record| get_fields_from_record(record, fields))
+        .collect();
 
-    match indices {
-        Some(indices) => {
-            let mut records = Vec::new();
-
-            for idx in indices {
-                if let Some(record) = cache.records.get(idx) {
-                    let record_map = get_fields_from_record(record, fields);
-                    records.push(record_map);
-                }
-            }
-
-            if records.is_empty() {
-                QueryResult::NotFound(query.to_string())
-            } else {
-                QueryResult::Found(query.to_string(), records)
-            }
-        }
-        None => QueryResult::NotFound(query.to_string()),
+    if records.is_empty() {
+        QueryResult::NotFound(query.to_string())
+    } else {
+        QueryResult::Found(query.to_string(), records)
     }
 }
 
@@ -327,7 +324,12 @@ fn main() {
 
     // Optionally benchmark lookups
     if args.benchmark {
-        benchmark_lookups(archived_cache, 10000, 0.95).expect("Failed to benchmark lookups");
+        benchmark_lookups(
+            archived_cache,
+            args.benchmark_lookups,
+            args.benchmark_hits / 100.0,
+        )
+        .expect("Failed to benchmark lookups");
     }
 
     // Determine output type (default to Pretty)
@@ -353,8 +355,14 @@ fn main() {
             continue; // Skip empty lines
         }
 
+        let selection = if args.all_matches {
+            MatchSelection::All
+        } else {
+            MatchSelection::HighestPriority
+        };
+
         // Process the query and get the result
-        let result = lookup_gene(archived_cache, query, args.all_matches, &args.fields);
+        let result = lookup_gene(archived_cache, query, selection, &args.fields);
 
         // Print the result in the specified format
         if let Err(e) = print_query_result(&result, &output_type, args.no_header) {

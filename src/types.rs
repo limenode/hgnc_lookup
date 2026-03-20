@@ -211,43 +211,37 @@ pub struct Cache {
     pub map: std::collections::HashMap<String, Vec<Match>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchSelection {
+    HighestPriority,
+    All,
+}
+
 impl ArchivedCache {
     /// Get all matches for a given key, sorted by priority (highest first)
-    pub fn get_matches(&self, key: &str) -> Option<&ArchivedVec<ArchivedMatch>> {
+    pub fn matches_for(&self, key: &str) -> Option<&ArchivedVec<ArchivedMatch>> {
         let normalized_key = key.trim().to_uppercase();
-
         self.map.get(normalized_key.as_str())
     }
 
-    /// Get indices based on whether to return all matches or just highest priority
-    /// Get indices of matching records, optionally filtered by highest priority
-    pub fn get_indices(&self, key: &str, return_all: bool) -> Option<Vec<usize>> {
-        let matches = self.get_matches(key)?;
+    pub fn matching_records(
+        &self,
+        key: &str,
+        selection: MatchSelection,
+    ) -> impl Iterator<Item = &ArchivedHgncRecord> {
+        self.matches_for(key).into_iter().flat_map(move |matches| {
+            let highest = matches.first().map(|m| m.priority);
 
-        if matches.is_empty() {
-            return None;
-        }
-
-        if return_all {
-            // Return all match indices
-            Some(
-                matches
-                    .iter()
-                    .map(|m| m.record_idx.to_native() as usize)
-                    .collect(),
-            )
-        } else {
-            // matches are sorted by priority, first has highest priority
-            let highest_priority = matches[0].priority;
-
-            // Take while priority matches
-            Some(
-                matches
-                    .iter()
-                    .take_while(|m| m.priority == highest_priority)
-                    .map(|m| m.record_idx.to_native() as usize)
-                    .collect(),
-            )
-        }
+            matches
+                .iter()
+                .filter(move |m| match selection {
+                    MatchSelection::All => true,
+                    MatchSelection::HighestPriority => Some(m.priority) == highest,
+                })
+                .map(move |m| {
+                    let idx = m.record_idx.to_native() as usize;
+                    &self.records[idx]
+                })
+        })
     }
 }
