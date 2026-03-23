@@ -1,16 +1,15 @@
 mod cache_functions;
 mod types;
 
-use cache_functions::{get_cache_path, get_fields_from_record};
+use cache_functions::get_cache_path;
 use clap::{Parser, ValueEnum};
-use indexmap::IndexMap;
 use rkyv::rancor;
 use std::error::Error;
 use std::io::BufRead;
 use std::path::PathBuf;
 use types::ArchivedCache;
 
-use crate::types::MatchSelection;
+use crate::types::{ALL_FIELDS, ArchivedHgncRecord, Field, MatchSelection};
 
 #[derive(ValueEnum, Clone, Debug)]
 enum OutputType {
@@ -22,9 +21,9 @@ enum OutputType {
 }
 
 /// Result of a query operation
-enum QueryResult {
-    Found(String, Vec<IndexMap<String, String>>),
-    NotFound(String),
+enum QueryResult<'q, 'r> {
+    Found(&'q str, Vec<&'r ArchivedHgncRecord>), // Query and list of matching records
+    NotFound(&'q str),
 }
 
 #[derive(Parser, Debug)]
@@ -118,7 +117,7 @@ fn benchmark_lookups(
 
     for key in sampled_keys {
         let start = Instant::now();
-        let result = lookup_gene(cache, &key, MatchSelection::All, &None);
+        let result = lookup_gene(cache, &key, MatchSelection::All);
         let duration = start.elapsed();
 
         durations.push(duration);
@@ -164,27 +163,24 @@ fn benchmark_lookups(
     Ok(())
 }
 
-fn lookup_gene(
-    cache: &ArchivedCache,
-    query: &str,
+fn lookup_gene<'q, 'r>(
+    cache: &'r ArchivedCache,
+    query: &'q str,
     selection: MatchSelection,
-    fields: &Option<Vec<String>>,
-) -> QueryResult {
-    let records: Vec<_> = cache
-        .matching_records(query, selection)
-        .map(|record| get_fields_from_record(record, fields))
-        .collect();
+) -> QueryResult<'q, 'r> {
+    let records: Vec<_> = cache.matching_records(query, selection).collect();
 
     if records.is_empty() {
-        QueryResult::NotFound(query.to_string())
+        QueryResult::NotFound(query)
     } else {
-        QueryResult::Found(query.to_string(), records)
+        QueryResult::Found(query, records)
     }
 }
 
 /// Print a query result in the specified format
 fn print_query_result(
     result: &QueryResult,
+    fields: &[Field],
     output_type: &OutputType,
     no_header: bool,
 ) -> Result<(), Box<dyn Error>> {
@@ -194,13 +190,13 @@ fn print_query_result(
             println!("Query: {}", query);
             println!("Found {} match(es)\n", records.len());
 
-            for (idx, record_map) in records.iter().enumerate() {
+            for (idx, record) in records.iter().enumerate() {
                 if idx > 0 {
                     println!("\n{}", "=".repeat(80));
                     println!();
                 }
 
-                for (field, value) in record_map {
+                for (field, value) in record.selected_fields(fields) {
                     if no_header {
                         println!("{}", value);
                     } else {
@@ -210,41 +206,62 @@ fn print_query_result(
             }
         }
         (QueryResult::Found(query, records), OutputType::Json) => {
-            // Output as array of objects for easy parsing
+            let records_json: Vec<_> = records
+                .iter()
+                .map(|record| {
+                    let mut obj = serde_json::Map::new();
+                    for (field, value) in record.selected_fields(fields) {
+                        obj.insert(
+                            field.to_string(),
+                            serde_json::Value::String(value.to_string()),
+                        );
+                    }
+                    serde_json::Value::Object(obj)
+                })
+                .collect();
             let output = serde_json::json!({
                 "query": query,
                 "count": records.len(),
-                "records": records
+                "records": records_json
             });
             println!("{}", serde_json::to_string(&output)?);
         }
         (QueryResult::Found(query, records), OutputType::JsonPretty) => {
-            // Output as array of objects for easy parsing
+            let records_json: Vec<_> = records
+                .iter()
+                .map(|record| {
+                    let mut obj = serde_json::Map::new();
+                    for (field, value) in record.selected_fields(fields) {
+                        obj.insert(
+                            field.to_string(),
+                            serde_json::Value::String(value.to_string()),
+                        );
+                    }
+                    serde_json::Value::Object(obj)
+                })
+                .collect();
             let output = serde_json::json!({
                 "query": query,
                 "count": records.len(),
-                "records": records
+                "records": records_json
             });
             println!("{}", serde_json::to_string_pretty(&output)?);
         }
         (QueryResult::Found(query, records), OutputType::Csv) => {
             let mut wtr = csv::WriterBuilder::new().from_writer(std::io::stdout());
 
-            // Get all field names (assuming all records have same fields)
-            if let Some(first_record) = records.first() {
-                if !no_header {
-                    // Write header with "query" as first column
-                    let mut headers = vec!["query".to_string()];
-                    headers.extend(first_record.keys().map(|k| k.to_string()));
-                    wtr.write_record(&headers)?;
-                }
+            if !no_header {
+                let mut headers = Vec::with_capacity(fields.len() + 1);
+                headers.push("query");
+                headers.extend(fields.iter().map(Field::as_str));
+                wtr.write_record(&headers)?;
+            }
 
-                // Write each record as a row
-                for record_map in records {
-                    let mut row = vec![query.to_string()];
-                    row.extend(record_map.values().map(|v| v.to_string()));
-                    wtr.write_record(&row)?;
-                }
+            for record in records {
+                let mut row = Vec::with_capacity(fields.len() + 1);
+                row.push(*query);
+                row.extend(fields.iter().map(|field| record.field_value(*field)));
+                wtr.write_record(&row)?;
             }
 
             wtr.flush()?;
@@ -254,21 +271,17 @@ fn print_query_result(
                 .delimiter(b'\t')
                 .from_writer(std::io::stdout());
 
-            // Get all field names (assuming all records have same fields)
-            if let Some(first_record) = records.first() {
-                if !no_header {
-                    // Write header with "query" as first column
-                    let mut headers = vec!["query".to_string()];
-                    headers.extend(first_record.keys().map(|k| k.to_string()));
-                    wtr.write_record(&headers)?;
-                }
-
-                // Write each record as a row
-                for record_map in records {
-                    let mut row = vec![query.to_string()];
-                    row.extend(record_map.values().map(|v| v.to_string()));
-                    wtr.write_record(&row)?;
-                }
+            if !no_header {
+                let mut headers = Vec::with_capacity(fields.len() + 1);
+                headers.push("query");
+                headers.extend(fields.iter().map(Field::as_str));
+                wtr.write_record(&headers)?;
+            }
+            for record in records {
+                let mut row = Vec::with_capacity(fields.len() + 1);
+                row.push(*query);
+                row.extend(fields.iter().map(|field| record.field_value(*field)));
+                wtr.write_record(&row)?;
             }
 
             wtr.flush()?;
@@ -322,6 +335,12 @@ fn main() {
     let bytes = std::fs::read(&cache_path).expect("Failed to read cache file");
     let archived_cache = rkyv::access::<ArchivedCache, rancor::Error>(&bytes).unwrap();
 
+    // Parse CLI fields to Vec<Fields>
+    let fields: Vec<Field> = match args.fields {
+        Some(field_strs) => field_strs.iter().filter_map(|s| Field::parse(s)).collect(),
+        None => ALL_FIELDS.to_vec(), // Use all fields if none specified
+    };
+
     // Optionally benchmark lookups
     if args.benchmark {
         benchmark_lookups(
@@ -362,10 +381,10 @@ fn main() {
         };
 
         // Process the query and get the result
-        let result = lookup_gene(archived_cache, query, selection, &args.fields);
+        let result = lookup_gene(archived_cache, query, selection);
 
         // Print the result in the specified format
-        if let Err(e) = print_query_result(&result, &output_type, args.no_header) {
+        if let Err(e) = print_query_result(&result, &fields, &output_type, args.no_header) {
             eprintln!("Error printing result: {}", e);
         }
     }

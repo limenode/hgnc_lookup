@@ -1,5 +1,4 @@
-use crate::types::{ALL_FIELDS, ArchivedHgncRecord, Cache, HgncRecord, KeyPriority, Match};
-use indexmap::IndexMap;
+use crate::types::{Cache, HgncRecord, KeyPriority, Match};
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -68,10 +67,10 @@ pub fn build_cache() -> Result<(), Box<dyn Error>> {
 
     // If the file already exists, skip downloading and building
     if cache_path.exists() {
-        println!(
-            "Cache file already exists at {:?}, skipping download and build.",
-            cache_path
-        );
+        // println!(
+        //     "Cache file already exists at {:?}, skipping download and build.",
+        //     cache_path
+        // );
         return Ok(());
     }
 
@@ -141,30 +140,4 @@ pub fn build_cache() -> Result<(), Box<dyn Error>> {
     std::fs::write(cache_path, serialized)?;
 
     Ok(())
-}
-
-fn extract_records<'a, I>(record: &ArchivedHgncRecord, fields: I) -> IndexMap<String, String>
-where
-    I: IntoIterator<Item = &'a str>,
-{
-    fields
-        .into_iter()
-        .filter_map(|name| {
-            let trimmed = name.trim();
-            record
-                .get_field(trimmed)
-                .filter(|value| !value.is_empty())
-                .map(|value| (trimmed.to_string(), value.to_string()))
-        })
-        .collect()
-}
-
-pub fn get_fields_from_record(
-    record: &ArchivedHgncRecord,
-    fields: &Option<Vec<String>>,
-) -> IndexMap<String, String> {
-    match fields {
-        Some(v) => extract_records(record, v.iter().map(|s| s.as_str())),
-        None => extract_records(record, ALL_FIELDS.iter().copied()),
-    }
 }

@@ -599,7 +599,6 @@ dependencies = [
  "clap",
  "csv",
  "dirs",
- "indexmap",
  "rand 0.10.0",
  "reqwest",
  "rkyv 0.8.15",
