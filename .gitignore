@@ -4,3 +4,5 @@ test.txt
 
 hgnc_cache.bin
 hgnc_complete_set.txt
+flamegraph.svg
+perf.data
