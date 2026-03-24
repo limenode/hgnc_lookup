@@ -1,4 +1,5 @@
 mod cache_functions;
+mod printer;
 mod types;
 
 use cache_functions::get_cache_path;
@@ -9,6 +10,7 @@ use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use types::ArchivedCache;
 
+use crate::printer::print_query_result;
 use crate::types::{ALL_FIELDS, ArchivedHgncRecord, Field, MatchSelection};
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -185,132 +187,6 @@ fn lookup_gene<'q, 'r>(
     }
 }
 
-fn print_delimited_helper(
-    query: &str,
-    records: &[&ArchivedHgncRecord],
-    fields: &[Field],
-    delimiter: u8,
-) {
-    let mut wtr = csv::WriterBuilder::new()
-        .delimiter(delimiter)
-        .from_writer(std::io::stdout());
-
-    for record in records {
-        let row =
-            std::iter::once(query).chain(fields.iter().map(|field| record.field_value(*field)));
-        wtr.write_record(row).expect("Failed to write record");
-    }
-
-    wtr.flush().expect("Failed to flush writer");
-}
-
-fn print_json_helper(
-    query: &str,
-    records: &[&ArchivedHgncRecord],
-    fields: &[Field],
-    pretty: bool,
-) -> Result<(), Box<dyn Error>> {
-    let records_json: Vec<_> = records
-        .iter()
-        .map(|record| {
-            let mut obj = serde_json::Map::new();
-            for (field, value) in record.selected_fields(fields) {
-                obj.insert(
-                    field.to_string(),
-                    serde_json::Value::String(value.to_string()),
-                );
-            }
-            serde_json::Value::Object(obj)
-        })
-        .collect();
-
-    let output = serde_json::json!({
-        "query": query,
-        "count": records.len(),
-        "records": records_json
-    });
-
-    if pretty {
-        println!("{}", serde_json::to_string_pretty(&output)?);
-    } else {
-        println!("{}", serde_json::to_string(&output)?);
-    }
-
-    Ok(())
-}
-
-fn print_json_error_helper(query: &str, pretty: bool) -> Result<(), Box<dyn Error>> {
-    let error_obj = serde_json::json!({
-        "error": "not_found",
-        "query": query,
-        "message": format!("No record found for query: {}", query)
-    });
-    let json = serde_json::to_string(&error_obj)?;
-
-    if pretty {
-        println!("{}", serde_json::to_string_pretty(&error_obj)?);
-    } else {
-        println!("{}", json);
-    }
-
-    Ok(())
-}
-
-/// Print a query result in the specified format
-fn print_query_result(
-    result: &QueryResult,
-    fields: &[Field],
-    output_type: &OutputType,
-    no_header: bool,
-) -> Result<(), Box<dyn Error>> {
-    match (result, output_type) {
-        // Found cases
-        (QueryResult::Found(query, records), OutputType::Pretty) => {
-            println!("Query: {}", query);
-            println!("Found {} match(es)\n", records.len());
-
-            for (idx, record) in records.iter().enumerate() {
-                if idx > 0 {
-                    println!("\n{}", "=".repeat(80));
-                    println!();
-                }
-
-                for (field, value) in record.selected_fields(fields) {
-                    if no_header {
-                        println!("{}", value);
-                    } else {
-                        println!("{}: {}", field, value);
-                    }
-                }
-            }
-        }
-        (QueryResult::Found(query, records), OutputType::Json) => {
-            print_json_helper(query, records, fields, false)?;
-        }
-        (QueryResult::Found(query, records), OutputType::JsonPretty) => {
-            print_json_helper(query, records, fields, true)?;
-        }
-        (QueryResult::Found(query, records), OutputType::Csv) => {
-            print_delimited_helper(query, records, fields, b',');
-        }
-        (QueryResult::Found(query, records), OutputType::Tsv) => {
-            print_delimited_helper(query, records, fields, b'\t');
-        }
-
-        // NotFound cases
-        (QueryResult::NotFound(query), OutputType::Json) => {
-            print_json_error_helper(query, false)?;
-        }
-        (QueryResult::NotFound(query), OutputType::JsonPretty) => {
-            print_json_error_helper(query, true)?;
-        }
-        (QueryResult::NotFound(query), OutputType::Pretty | OutputType::Csv | OutputType::Tsv) => {
-            eprintln!("No record found for query: {}", query);
-        }
-    }
-    Ok(())
-}
-
 fn read_fields_from_source(path: &Path) -> Result<Vec<Field>, Box<dyn std::error::Error>> {
     let reader: Box<dyn BufRead> = if path.as_os_str() == "-" {
         Box::new(BufReader::new(io::stdin().lock()))
@@ -428,8 +304,6 @@ fn main() {
         Box::new(BufReader::new(io::stdin().lock()))
     };
 
-    let mut no_header = args.no_header;
-
     // If not no header, print header for CSV/TSV output once
     if !args.no_header {
         if let OutputType::Csv | OutputType::Tsv = output_type {
@@ -446,8 +320,6 @@ fn main() {
                 .from_writer(std::io::stdout());
             wtr.write_record(&headers).expect("Failed to write header");
             wtr.flush().expect("Failed to flush header");
-
-            no_header = true; // Set no_header to true to avoid printing headers again in the loop
         }
     }
 
@@ -476,7 +348,7 @@ fn main() {
         let result = lookup_gene(archived_cache, query, selection);
 
         // Print the result in the specified format
-        if let Err(e) = print_query_result(&result, &all_fields, &output_type, no_header) {
+        if let Err(e) = print_query_result(&result, &all_fields, &output_type) {
             eprintln!("Error printing result: {}", e);
         }
     }
