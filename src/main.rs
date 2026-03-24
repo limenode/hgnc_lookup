@@ -37,6 +37,10 @@ struct Cli {
     #[arg(short, long, value_delimiter = ',')]
     fields: Option<Vec<String>>,
 
+    /// Fields file delimited by newlines
+    #[arg(long)]
+    fields_file: Option<PathBuf>,
+
     /// Output format
     #[arg(short, long)]
     output_type: Option<OutputType>,
@@ -336,10 +340,42 @@ fn main() {
     let archived_cache = rkyv::access::<ArchivedCache, rancor::Error>(&bytes).unwrap();
 
     // Parse CLI fields to Vec<Fields>
-    let fields: Vec<Field> = match args.fields {
-        Some(field_strs) => field_strs.iter().filter_map(|s| Field::parse(s)).collect(),
-        None => ALL_FIELDS.to_vec(), // Use all fields if none specified
+    // 1. Get fields from fields_file if provided
+    let mut all_fields: Vec<Field> = if let Some(fields_file) = args.fields_file {
+        std::fs::read_to_string(fields_file)
+            .expect("Failed to read fields file")
+            .lines()
+            .filter_map(|line| {
+                let field_str = line.trim();
+                if field_str.is_empty() {
+                    None
+                } else {
+                    Field::parse(field_str)
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
     };
+
+    // 2. Extend with fields from --fields if provided (overrides fields_file)
+    // If no fields are provided from either source, default to ALL_FIELDS
+    match args.fields {
+        Some(field_strs) => {
+            let new_fields: Vec<Field> =
+                field_strs.iter().filter_map(|s| Field::parse(s)).collect();
+            all_fields.extend(new_fields);
+        }
+        None => {
+            if all_fields.is_empty() {
+                all_fields = ALL_FIELDS.to_vec();
+            }
+        }
+    };
+
+    // Remove duplicates while preserving order
+    let mut seen = std::collections::HashSet::new();
+    all_fields.retain(|field| seen.insert(*field));
 
     // Optionally benchmark lookups
     if args.benchmark {
@@ -384,7 +420,7 @@ fn main() {
         let result = lookup_gene(archived_cache, query, selection);
 
         // Print the result in the specified format
-        if let Err(e) = print_query_result(&result, &fields, &output_type, args.no_header) {
+        if let Err(e) = print_query_result(&result, &all_fields, &output_type, args.no_header) {
             eprintln!("Error printing result: {}", e);
         }
     }

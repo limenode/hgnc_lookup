@@ -62,7 +62,7 @@ pub struct HgncRecord {
     pub gencc: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Field {
     HgncId,
     Symbol,
