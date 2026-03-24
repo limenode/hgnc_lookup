@@ -83,22 +83,22 @@ fn benchmark_lookups(
     use rand::prelude::{IndexedRandom, SliceRandom};
     use std::time::{Duration, Instant};
 
-    println!("\n=== Benchmark: Average Lookup Time ===");
+    eprintln!("\n=== Benchmark ===");
 
     // Collect all keys from the HashMap
     let all_keys: Vec<String> = cache.map.iter().map(|(k, _)| k.to_string()).collect();
 
     let total_keys = all_keys.len();
-    println!("Total keys in cache: {}", total_keys);
+    eprintln!("Total keys in cache: {}", total_keys);
 
     if total_keys == 0 {
-        println!("No keys found in cache. Skipping benchmark.");
+        eprintln!("No keys found in cache. Skipping benchmark.");
         return Ok(());
     }
 
     // Limit n to the number of available keys
     let n = n.min(total_keys);
-    println!("Performing {} lookups...", n);
+    eprintln!("Performing {} lookups...", n);
 
     // Randomly sample n keys, with 5% being random strings (misses)
     let mut rng = rand::rng();
@@ -150,21 +150,21 @@ fn benchmark_lookups(
     let p99_duration = durations[(n * 99) / 100];
 
     // Report results
-    println!("\n--- Benchmark Results ---");
-    println!("Successful lookups: {} / {}", success_count, n);
-    println!(
+    eprintln!("\n--- Benchmark Results ---");
+    eprintln!("Successful lookups: {} / {}", success_count, n);
+    eprintln!(
         "Success rate: {:.2}%",
         (success_count as f64 / n as f64) * 100.0
     );
-    println!("Average lookup time: {:?}", avg_duration);
-    println!("Median lookup time:  {:?}", median_duration);
-    println!("Min lookup time:     {:?}", min_duration);
-    println!("Max lookup time:     {:?}", max_duration);
-    println!("95th percentile:     {:?}", p95_duration);
-    println!("99th percentile:     {:?}", p99_duration);
-    println!("Total time:          {:?}", total_duration);
-    println!(
-        "Lookups per second:  {:.2}",
+    eprintln!("Average lookup time: {:?}", avg_duration);
+    eprintln!("Median lookup time:  {:?}", median_duration);
+    eprintln!("Min lookup time:     {:?}", min_duration);
+    eprintln!("Max lookup time:     {:?}", max_duration);
+    eprintln!("95th percentile:     {:?}", p95_duration);
+    eprintln!("99th percentile:     {:?}", p99_duration);
+    eprintln!("Total time:          {:?}", total_duration);
+    eprintln!(
+        "Lookups per second:  {:.2}\n",
         n as f64 / total_duration.as_secs_f64()
     );
 
@@ -183,6 +183,77 @@ fn lookup_gene<'q, 'r>(
     } else {
         QueryResult::Found(query, records)
     }
+}
+
+fn print_delimited_helper(
+    query: &str,
+    records: &[&ArchivedHgncRecord],
+    fields: &[Field],
+    delimiter: u8,
+) {
+    let mut wtr = csv::WriterBuilder::new()
+        .delimiter(delimiter)
+        .from_writer(std::io::stdout());
+
+    for record in records {
+        let row =
+            std::iter::once(query).chain(fields.iter().map(|field| record.field_value(*field)));
+        wtr.write_record(row).expect("Failed to write record");
+    }
+
+    wtr.flush().expect("Failed to flush writer");
+}
+
+fn print_json_helper(
+    query: &str,
+    records: &[&ArchivedHgncRecord],
+    fields: &[Field],
+    pretty: bool,
+) -> Result<(), Box<dyn Error>> {
+    let records_json: Vec<_> = records
+        .iter()
+        .map(|record| {
+            let mut obj = serde_json::Map::new();
+            for (field, value) in record.selected_fields(fields) {
+                obj.insert(
+                    field.to_string(),
+                    serde_json::Value::String(value.to_string()),
+                );
+            }
+            serde_json::Value::Object(obj)
+        })
+        .collect();
+
+    let output = serde_json::json!({
+        "query": query,
+        "count": records.len(),
+        "records": records_json
+    });
+
+    if pretty {
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        println!("{}", serde_json::to_string(&output)?);
+    }
+
+    Ok(())
+}
+
+fn print_json_error_helper(query: &str, pretty: bool) -> Result<(), Box<dyn Error>> {
+    let error_obj = serde_json::json!({
+        "error": "not_found",
+        "query": query,
+        "message": format!("No record found for query: {}", query)
+    });
+    let json = serde_json::to_string(&error_obj)?;
+
+    if pretty {
+        println!("{}", serde_json::to_string_pretty(&error_obj)?);
+    } else {
+        println!("{}", json);
+    }
+
+    Ok(())
 }
 
 /// Print a query result in the specified format
@@ -214,105 +285,24 @@ fn print_query_result(
             }
         }
         (QueryResult::Found(query, records), OutputType::Json) => {
-            let records_json: Vec<_> = records
-                .iter()
-                .map(|record| {
-                    let mut obj = serde_json::Map::new();
-                    for (field, value) in record.selected_fields(fields) {
-                        obj.insert(
-                            field.to_string(),
-                            serde_json::Value::String(value.to_string()),
-                        );
-                    }
-                    serde_json::Value::Object(obj)
-                })
-                .collect();
-            let output = serde_json::json!({
-                "query": query,
-                "count": records.len(),
-                "records": records_json
-            });
-            println!("{}", serde_json::to_string(&output)?);
+            print_json_helper(query, records, fields, false)?;
         }
         (QueryResult::Found(query, records), OutputType::JsonPretty) => {
-            let records_json: Vec<_> = records
-                .iter()
-                .map(|record| {
-                    let mut obj = serde_json::Map::new();
-                    for (field, value) in record.selected_fields(fields) {
-                        obj.insert(
-                            field.to_string(),
-                            serde_json::Value::String(value.to_string()),
-                        );
-                    }
-                    serde_json::Value::Object(obj)
-                })
-                .collect();
-            let output = serde_json::json!({
-                "query": query,
-                "count": records.len(),
-                "records": records_json
-            });
-            println!("{}", serde_json::to_string_pretty(&output)?);
+            print_json_helper(query, records, fields, true)?;
         }
         (QueryResult::Found(query, records), OutputType::Csv) => {
-            let mut wtr = csv::WriterBuilder::new().from_writer(std::io::stdout());
-
-            if !no_header {
-                let mut headers = Vec::with_capacity(fields.len() + 1);
-                headers.push("query");
-                headers.extend(fields.iter().map(Field::as_str));
-                wtr.write_record(&headers)?;
-            }
-
-            for record in records {
-                let mut row = Vec::with_capacity(fields.len() + 1);
-                row.push(*query);
-                row.extend(fields.iter().map(|field| record.field_value(*field)));
-                wtr.write_record(&row)?;
-            }
-
-            wtr.flush()?;
+            print_delimited_helper(query, records, fields, b',');
         }
         (QueryResult::Found(query, records), OutputType::Tsv) => {
-            let mut wtr = csv::WriterBuilder::new()
-                .delimiter(b'\t')
-                .from_writer(std::io::stdout());
-
-            if !no_header {
-                let mut headers = Vec::with_capacity(fields.len() + 1);
-                headers.push("query");
-                headers.extend(fields.iter().map(Field::as_str));
-                wtr.write_record(&headers)?;
-            }
-            for record in records {
-                let mut row = Vec::with_capacity(fields.len() + 1);
-                row.push(*query);
-                row.extend(fields.iter().map(|field| record.field_value(*field)));
-                wtr.write_record(&row)?;
-            }
-
-            wtr.flush()?;
+            print_delimited_helper(query, records, fields, b'\t');
         }
 
         // NotFound cases
         (QueryResult::NotFound(query), OutputType::Json) => {
-            let error_obj = serde_json::json!({
-                "error": "not_found",
-                "query": query,
-                "message": format!("No record found for query: {}", query)
-            });
-            let json = serde_json::to_string(&error_obj)?;
-            println!("{}", json);
+            print_json_error_helper(query, false)?;
         }
         (QueryResult::NotFound(query), OutputType::JsonPretty) => {
-            let error_obj = serde_json::json!({
-                "error": "not_found",
-                "query": query,
-                "message": format!("No record found for query: {}", query)
-            });
-            let json = serde_json::to_string_pretty(&error_obj)?;
-            println!("{},", json);
+            print_json_error_helper(query, true)?;
         }
         (QueryResult::NotFound(query), OutputType::Pretty | OutputType::Csv | OutputType::Tsv) => {
             eprintln!("No record found for query: {}", query);
@@ -346,9 +336,10 @@ fn main() {
     let args = Cli::parse();
 
     // Fail if both --query-file and --fields-file requests stdin (i.e. "-")
-    if args.query_file.as_deref() == Some(Path::new("-"))
-        && args.fields_file.as_deref() == Some(Path::new("-"))
-    {
+    let query_is_stdin = args.query_file.as_deref() == Some(Path::new("-"));
+    let fields_is_stdin = args.fields_file.as_deref() == Some(Path::new("-"));
+
+    if query_is_stdin && fields_is_stdin {
         eprintln!("Error: Both --query-file and --fields-file cannot be '-' (stdin)");
         eprintln!(
             "Please provide one of them as a file path or remove one of the options to read from stdin"
@@ -422,10 +413,9 @@ fn main() {
 
     // Determine output type (default to Pretty)
     let output_type = args.output_type.unwrap_or(OutputType::Pretty);
-    println!("Output type: {:?}", output_type);
+    eprintln!("Output type: {:?}", output_type);
 
     // Read queries from --query-file
-
     let reader: Box<dyn BufRead> = if let Some(path) = &args.query_file {
         if path.as_os_str() == "-" {
             Box::new(BufReader::new(io::stdin().lock()))
@@ -437,6 +427,29 @@ fn main() {
     } else {
         Box::new(BufReader::new(io::stdin().lock()))
     };
+
+    let mut no_header = args.no_header;
+
+    // If not no header, print header for CSV/TSV output once
+    if !args.no_header {
+        if let OutputType::Csv | OutputType::Tsv = output_type {
+            let mut headers = Vec::with_capacity(all_fields.len() + 1);
+            headers.push("query");
+            headers.extend(all_fields.iter().map(Field::as_str));
+            let delimiter = match output_type {
+                OutputType::Csv => b',',
+                OutputType::Tsv => b'\t',
+                _ => unreachable!(),
+            };
+            let mut wtr = csv::WriterBuilder::new()
+                .delimiter(delimiter)
+                .from_writer(std::io::stdout());
+            wtr.write_record(&headers).expect("Failed to write header");
+            wtr.flush().expect("Failed to flush header");
+
+            no_header = true; // Set no_header to true to avoid printing headers again in the loop
+        }
+    }
 
     for line in reader.lines() {
         let line = match line {
@@ -463,7 +476,7 @@ fn main() {
         let result = lookup_gene(archived_cache, query, selection);
 
         // Print the result in the specified format
-        if let Err(e) = print_query_result(&result, &all_fields, &output_type, args.no_header) {
+        if let Err(e) = print_query_result(&result, &all_fields, &output_type, no_header) {
             eprintln!("Error printing result: {}", e);
         }
     }
