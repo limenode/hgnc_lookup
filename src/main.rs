@@ -5,8 +5,8 @@ use cache_functions::get_cache_path;
 use clap::{Parser, ValueEnum};
 use rkyv::rancor;
 use std::error::Error;
-use std::io::BufRead;
-use std::path::PathBuf;
+use std::io::{self, BufRead, BufReader};
+use std::path::{Path, PathBuf};
 use types::ArchivedCache;
 
 use crate::types::{ALL_FIELDS, ArchivedHgncRecord, Field, MatchSelection};
@@ -33,6 +33,10 @@ enum QueryResult<'q, 'r> {
     long_about = None
 )]
 struct Cli {
+    /// Queries file with symbols/IDs to lookup
+    #[arg(short, long, default_value = "-")]
+    query_file: Option<PathBuf>,
+
     /// Fields to query (e.g. hgnc_id, symbol, alias_symbol)
     #[arg(short, long, value_delimiter = ',')]
     fields: Option<Vec<String>>,
@@ -317,8 +321,40 @@ fn print_query_result(
     Ok(())
 }
 
+fn read_fields_from_source(path: &Path) -> Result<Vec<Field>, Box<dyn std::error::Error>> {
+    let reader: Box<dyn BufRead> = if path.as_os_str() == "-" {
+        Box::new(BufReader::new(io::stdin().lock()))
+    } else {
+        Box::new(BufReader::new(std::fs::File::open(path)?))
+    };
+
+    let mut out = Vec::new();
+    for (idx, line) in reader.lines().enumerate() {
+        let line = line?;
+        let s = line.trim();
+        if s.is_empty() || s.starts_with('#') {
+            continue;
+        }
+        let field = Field::parse(s)
+            .ok_or_else(|| format!("Invalid field '{}' at {}:{}", s, path.display(), idx + 1))?;
+        out.push(field);
+    }
+    Ok(out)
+}
+
 fn main() {
     let args = Cli::parse();
+
+    // Fail if both --query-file and --fields-file requests stdin (i.e. "-")
+    if args.query_file.as_deref() == Some(Path::new("-"))
+        && args.fields_file.as_deref() == Some(Path::new("-"))
+    {
+        eprintln!("Error: Both --query-file and --fields-file cannot be '-' (stdin)");
+        eprintln!(
+            "Please provide one of them as a file path or remove one of the options to read from stdin"
+        );
+        std::process::exit(1);
+    }
 
     let cache_path: PathBuf = get_cache_path().expect("Failed to determine cache path");
 
@@ -340,30 +376,27 @@ fn main() {
     let archived_cache = rkyv::access::<ArchivedCache, rancor::Error>(&bytes).unwrap();
 
     // Parse CLI fields to Vec<Fields>
-    // 1. Get fields from fields_file if provided
-    let mut all_fields: Vec<Field> = if let Some(fields_file) = args.fields_file {
-        std::fs::read_to_string(fields_file)
-            .expect("Failed to read fields file")
-            .lines()
-            .filter_map(|line| {
-                let field_str = line.trim();
-                if field_str.is_empty() {
-                    None
-                } else {
-                    Field::parse(field_str)
-                }
-            })
-            .collect()
+    let mut all_fields: Vec<Field> = if let Some(path) = &args.fields_file {
+        read_fields_from_source(path).expect("Failed to read fields from --fields-file")
     } else {
         Vec::new()
     };
 
-    // 2. Extend with fields from --fields if provided (overrides fields_file)
+    // 2. Extend with fields from --fields if provided
     // If no fields are provided from either source, default to ALL_FIELDS
     match args.fields {
         Some(field_strs) => {
-            let new_fields: Vec<Field> =
-                field_strs.iter().filter_map(|s| Field::parse(s)).collect();
+            let new_fields: Vec<Field> = field_strs
+                .iter()
+                .filter_map(|s| {
+                    let field_str = s.trim();
+                    if field_str.is_empty() {
+                        None
+                    } else {
+                        Field::parse(field_str)
+                    }
+                })
+                .collect();
             all_fields.extend(new_fields);
         }
         None => {
@@ -391,9 +424,19 @@ fn main() {
     let output_type = args.output_type.unwrap_or(OutputType::Pretty);
     println!("Output type: {:?}", output_type);
 
-    // Read queries from stdin (one per line)
-    let stdin = std::io::stdin();
-    let reader = stdin.lock();
+    // Read queries from --query-file
+
+    let reader: Box<dyn BufRead> = if let Some(path) = &args.query_file {
+        if path.as_os_str() == "-" {
+            Box::new(BufReader::new(io::stdin().lock()))
+        } else {
+            Box::new(BufReader::new(
+                std::fs::File::open(path).expect("Failed to open query file"),
+            ))
+        }
+    } else {
+        Box::new(BufReader::new(io::stdin().lock()))
+    };
 
     for line in reader.lines() {
         let line = match line {
