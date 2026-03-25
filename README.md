@@ -38,6 +38,17 @@ The following URL is used by this program to retrieve the complete HGNC dataset:
 
 * https://storage.googleapis.com/public-download-files/hgnc/tsv/tsv/hgnc_complete_set.txt
 
+The metadata listed below will be output to stderr everytime the program is run:
+* Last Modified Date and Time
+* Cache Creation Date and Time
+* HTTP Source URL
+* HTTP ETag Header
+
+To update the HGNC complete set to the most up-to-date version, run the binary with the following parameters:
+```bash
+./hgnc_lookup --clear-cache
+```
+
 ## Citation / Attribution
 
 If you use the HGNC data retrieved from this tool in published work, please cite HGNC according to their official citation guidelines:
