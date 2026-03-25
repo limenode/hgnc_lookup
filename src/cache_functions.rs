@@ -1,4 +1,6 @@
 use crate::types::{Cache, HgncRecord, KeyPriority, Match};
+use chrono::Utc;
+use reqwest::header::{ETAG, LAST_MODIFIED};
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -74,7 +76,30 @@ pub fn build_cache() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
+    // Download the HGNC complete set file
     let response = reqwest::blocking::get(HGNC_COMPLETE_SET_URL)?;
+
+    // capture Last-Modified
+    let last_modified = response
+        .headers()
+        .get(LAST_MODIFIED)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| chrono::DateTime::parse_from_rfc2822(s).ok())
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|| {
+            eprintln!("Warning: Could not parse Last-Modified header, using current time.");
+            Utc::now()
+        })
+        .to_rfc3339();
+
+    // capture etag
+    let etag = response
+        .headers()
+        .get(ETAG)
+        .and_then(|h| h.to_str().ok())
+        .map(str::to_owned)
+        .unwrap_or_else(|| "unknown".to_string());
+
     let content = response.bytes()?;
 
     // Read with csv crate
@@ -133,7 +158,17 @@ pub fn build_cache() -> Result<(), Box<dyn Error>> {
         record_idx += 1;
     }
 
-    let cache = Cache { records, map };
+    let time_created = Utc::now().to_rfc3339();
+    let source_url = HGNC_COMPLETE_SET_URL.to_string();
+
+    let cache = Cache {
+        records,
+        map,
+        last_modified,
+        time_created,
+        source_url,
+        etag,
+    };
     let serialized = rkyv::to_bytes::<rkyv::rancor::Error>(&cache)?;
 
     // Write to file

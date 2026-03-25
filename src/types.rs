@@ -399,6 +399,10 @@ impl Match {
 pub struct Cache {
     pub records: Vec<HgncRecord>,
     pub map: std::collections::HashMap<String, Vec<Match>>,
+    pub last_modified: String,
+    pub time_created: String,
+    pub source_url: String,
+    pub etag: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -229,9 +229,9 @@ fn main() {
     if args.clear_cache {
         if (&cache_path).exists() {
             std::fs::remove_file(&cache_path).expect("Failed to clear cache file");
-            // println!("Cache file cleared: {:?}", cache_path);
+            eprintln!("Cache file cleared: {:?}", cache_path);
         } else {
-            // println!("No cache file to clear at: {:?}", cache_path);
+            eprintln!("No cache file to clear at: {:?}", cache_path);
         }
     }
 
@@ -239,8 +239,34 @@ fn main() {
     cache_functions::build_cache().expect("Failed to download cache");
 
     // Load cache from file
-    let bytes = std::fs::read(&cache_path).expect("Failed to read cache file");
-    let archived_cache = rkyv::access::<ArchivedCache, rancor::Error>(&bytes).unwrap();
+    let mut bytes = std::fs::read(&cache_path).expect("Failed to read cache file");
+
+    let archived_cache = match rkyv::access::<ArchivedCache, rancor::Error>(&bytes) {
+        Ok(cache) => cache,
+        Err(err) => {
+            eprintln!(
+                "Cache appears corrupted or incompatible ({}). Rebuilding cache...",
+                err
+            );
+
+            if cache_path.exists() {
+                std::fs::remove_file(&cache_path).expect("Failed to remove invalid cache file");
+            }
+
+            cache_functions::build_cache().expect("Failed to rebuild cache");
+
+            bytes = std::fs::read(&cache_path).expect("Failed to read rebuilt cache file");
+            rkyv::access::<ArchivedCache, rancor::Error>(&bytes)
+                .expect("Rebuilt cache is still invalid")
+        }
+    };
+
+    // Print out metadata to stderr
+    eprintln!("Cache metadata:");
+    eprintln!("  Last modified: {}", archived_cache.last_modified);
+    eprintln!("  Cache creation time: {}", archived_cache.time_created);
+    eprintln!("  Source URL: {}", archived_cache.source_url);
+    eprintln!("  ETag: {}", archived_cache.etag);
 
     // Parse CLI fields to Vec<Fields>
     let mut all_fields: Vec<Field> = if let Some(path) = &args.fields_file {
