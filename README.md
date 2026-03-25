@@ -2,19 +2,21 @@
 
 A fast, standalone command-line tool for HGNC gene symbol normalization and lookup.
 
-`hgnc_lookup` builds a local, binary-cached lookup table from the official complete HGNC dataset and allows you to resolve current HGNC symbols and associated information from aliases and previous symbols.
+`hgnc_lookup` builds a local, binary-cached lookup table from the official complete HGNC dataset and allows you to query for current HGNC symbols and associated information using a variety of input types.
 
 ## Features
-* Normalize gene symbols to official HGNC symbols
 * Fast lookups with zero-copy performance using an rkyv-backed binary cache.
-* Automatic caching to user-level cache directory (`~/.cache/hgnc_lookup/`)
+* Automatic caching to user-level cache directory (i.e. `~/.cache/hgnc_lookup/`)
 * Auto-downloads the HGNC complete dataset from the HGNC Google Cloud Storage Bucket.
+* Retrieves all records for symbols with multiple matches 
+  * Assigns priorities for gene symbol matching: official > previous > alias
+  * Provides options to retrieve highest priority records only (default) or all matching records (`--all-matches`)
 * Supports the following inputs:
   * HGNC IDs
   * Ensembl Gene IDs
-  * current HGNC symbols
-  * alias symbols
-  * previous symbols
+  * Current HGNC symbols
+  * Alias symbols
+  * Previous symbols
 
 ## Installation
 **Build from source**
