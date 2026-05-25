@@ -16,6 +16,8 @@ use crate::types::{ALL_FIELDS, ArchivedHgncRecord, Field, MatchSelection};
 #[derive(ValueEnum, Clone, Debug)]
 enum OutputType {
     Pretty,
+    /// Print only field values, one record per line, no query prefix or headers
+    Plain,
     Json,
     JsonPretty,
     Csv,
@@ -74,6 +76,14 @@ struct Cli {
     /// Don't print out headers/labels in the output
     #[arg(long)]
     no_header: bool,
+
+    /// Output only the official symbol for each query (one per line, plain text)
+    #[arg(long = "symbol", conflicts_with_all = ["fields", "fields_file", "hgnc_id_mode"])]
+    symbol_mode: bool,
+
+    /// Output only the HGNC ID for each query (one per line, plain text)
+    #[arg(long = "hgnc-id", conflicts_with_all = ["fields", "fields_file", "symbol_mode"])]
+    hgnc_id_mode: bool,
 }
 
 fn benchmark_lookups(
@@ -268,36 +278,42 @@ fn main() {
     eprintln!("  Source URL: {}", archived_cache.source_url);
     eprintln!("  ETag: {}", archived_cache.etag);
 
-    // Parse CLI fields to Vec<Fields>
-    let mut all_fields: Vec<Field> = if let Some(path) = &args.fields_file {
+    // Resolve which fields to output.
+    // --symbol and --hgnc-id are shortcuts that set a single field and conflict with --fields/--fields-file.
+    let mut all_fields: Vec<Field> = if args.symbol_mode {
+        vec![Field::Symbol]
+    } else if args.hgnc_id_mode {
+        vec![Field::HgncId]
+    } else if let Some(path) = &args.fields_file {
         read_fields_from_source(path).expect("Failed to read fields from --fields-file")
     } else {
         Vec::new()
     };
 
-    // 2. Extend with fields from --fields if provided
-    // If no fields are provided from either source, default to ALL_FIELDS
-    match args.fields {
-        Some(field_strs) => {
-            let new_fields: Vec<Field> = field_strs
-                .iter()
-                .filter_map(|s| {
-                    let field_str = s.trim();
-                    if field_str.is_empty() {
-                        None
-                    } else {
-                        Field::parse(field_str)
-                    }
-                })
-                .collect();
-            all_fields.extend(new_fields);
-        }
-        None => {
-            if all_fields.is_empty() {
-                all_fields = ALL_FIELDS.to_vec();
+    // Extend with --fields if provided; otherwise default to ALL_FIELDS when no fields collected yet.
+    if !args.symbol_mode && !args.hgnc_id_mode {
+        match args.fields {
+            Some(field_strs) => {
+                let new_fields: Vec<Field> = field_strs
+                    .iter()
+                    .filter_map(|s| {
+                        let field_str = s.trim();
+                        if field_str.is_empty() {
+                            None
+                        } else {
+                            Field::parse(field_str)
+                        }
+                    })
+                    .collect();
+                all_fields.extend(new_fields);
+            }
+            None => {
+                if all_fields.is_empty() {
+                    all_fields = ALL_FIELDS.to_vec();
+                }
             }
         }
-    };
+    }
 
     // Remove duplicates while preserving order
     let mut seen = std::collections::HashSet::new();
@@ -313,8 +329,12 @@ fn main() {
         .expect("Failed to benchmark lookups");
     }
 
-    // Determine output type (default to Pretty)
-    let output_type = args.output_type.unwrap_or(OutputType::Pretty);
+    // Determine output type. Shortcut flags default to Plain; otherwise Pretty.
+    let output_type = args.output_type.unwrap_or(if args.symbol_mode || args.hgnc_id_mode {
+        OutputType::Plain
+    } else {
+        OutputType::Pretty
+    });
     eprintln!("Output type: {:?}", output_type);
 
     // Read queries from --query-file

@@ -17,6 +17,13 @@ fn print_pretty_helper(query: &str, records: &[&ArchivedHgncRecord], fields: &[F
     }
 }
 
+fn print_plain_helper(records: &[&ArchivedHgncRecord], fields: &[Field]) {
+    for record in records {
+        let values: Vec<&str> = fields.iter().map(|f| record.field_value(*f)).collect();
+        println!("{}", values.join("\t"));
+    }
+}
+
 fn print_delimited_helper(
     query: &str,
     records: &[&ArchivedHgncRecord],
@@ -97,6 +104,9 @@ pub fn print_query_result(
 ) -> Result<(), Box<dyn Error>> {
     match (result, output_type) {
         // Found cases
+        (QueryResult::Found(_query, records), OutputType::Plain) => {
+            print_plain_helper(records, fields);
+        }
         (QueryResult::Found(query, records), OutputType::Pretty) => {
             print_pretty_helper(query, records, fields);
         }
@@ -114,6 +124,9 @@ pub fn print_query_result(
         }
 
         // NotFound cases
+        (QueryResult::NotFound(query), OutputType::Plain) => {
+            eprintln!("No record found for query: {}", query);
+        }
         (QueryResult::NotFound(query), OutputType::Json) => {
             print_json_error_helper(query, false)?;
         }
